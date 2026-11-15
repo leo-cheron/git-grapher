@@ -390,3 +390,23 @@ test("revert / cherry-pick dialogs: OK sends the listed commits to the matching 
     assert.deepEqual(calls, [[kind, [kind === "revert" ? "revert" : "cherryPick", ["c", "b"]]]]); assert.equal(hd.dialog, null);
   }
 });
+
+// A side panel is one copy for every space: a space switch binds it to the new space's repository, and the old binding's
+// loops end (its store's news isn't applied, its cx throws), so actions can't reach the previous repository.
+test("side panel: a space switch rebinds the graph to that space's repository and ends the old binding", async () => {
+  let active = "A"; const stores = [], drives = [], applied = [];
+  const storeFor = (_ad, root) => { let wake; const st = { state: { root }, next: () => new Promise((r) => { wake = r; }), refresh: async () => {}, push: (s) => wake(s) }; stores.push(st); return st; };
+  const GraphView = load("graph.js", "GraphView", { spaces: () => [{ id: active, active: true }], gitRun: async (_c, _a, { cwd }) => ({ code: 0, stdout: cwd }),
+    storeFor, herdrAdapter: () => ({}), exec: null, drive: (_st, _o, c) => drives.push(c) });
+  const gv = Object.create(GraphView.prototype);
+  Object.assign(gv, { p: {}, dv: {}, hd: { attach() {} }, cv: {}, locate: async () => ({ dir: "/" + active }), apply: (s) => applied.push(s) });
+  const cx = { notify() {}, sleep: tick, spawn(fn) { return Promise.resolve().then(() => fn(cx)); } };
+  gv.retarget(cx); await gv.attach(cx); await tick();
+  stores[0].push("A1"); await tick();
+  active = "B"; gv.retarget(cx); await tick(); await tick(); await tick();
+  assert.equal(gv.repo, "/B");
+  stores[0].push("A2"); stores[1].push("B1"); await tick(); await tick();
+  assert.deepEqual(applied, ["A1", "B1"]);
+  assert.throws(() => drives[0].notify(), /replaced/); drives[1].notify();
+  gv.retarget(cx); assert.equal(stores.length, 2, "no rebind while the space stays");
+});
